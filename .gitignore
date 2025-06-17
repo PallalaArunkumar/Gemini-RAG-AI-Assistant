@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+
+# Kaggle/Jupyter/Colab specific
+.ipynb_checkpoints/
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# FAISS index and data files
+# For this project, we are intentionally INCLUDING these for easy setup.
+# For larger projects, you might ignore them and use Git LFS or data download scripts.
+# faiss_index/
+# data/

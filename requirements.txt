@@ -1,0 +1,10 @@
+
+!pip install langchain_community
+!pip install pypdf
+!pip install langchain_openai
+!pip install sentence-transformers
+!pip install faiss-cpu
+!pip install transformers
+!pip install bitsandbytes
+!pip install accelerate
+!pip install -U bitsandbytes
