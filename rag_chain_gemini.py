@@ -1,12 +1,22 @@
 
 import os
+import logging
 
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 
 from langchain_google_genai import ChatGoogleGenerativeAI # For chat models like Gemini Pro
 from langchain_google_genai import GoogleGenerativeAIEmbeddings # For Gemini Embeddings
+# from create_load_vector_store import *
+# from data_loader import *
 
+ # --- Configure Logging ---
+logging.basicConfig(
+        level=logging.INFO, # Set the default logging level to INFO
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        force=True
+    )
+logger = logging.getLogger(__name__) # Get a logger instance for this module
 
 def setup_rag_components(document:str, faiss_db_path:str,llm_model_id:str):
 
@@ -25,21 +35,23 @@ def setup_rag_components(document:str, faiss_db_path:str,llm_model_id:str):
             
         except ImportError:
             # Fallback for other environments if getpass also fails
-            print("Kaggle Secrets not available. Trying to load from environment or it will error.")
+            logger.error("Google API Key not found. Please ensure it is set as a Kaggle Secret (or Colab Secret) named 'GOOGLE_API_KEY'.")
+            # print("Kaggle Secrets not available. Trying to load from environment or it will error.")
     else:
         loaded_key = os.environ.get("GOOGLE_API_KEY")
-        print(f"DEBUG: GOOGLE_API_KEY is loaded. First 5 chars: {loaded_key[:5]}*****")
-        print(f"DEBUG: Key length: {len(loaded_key)}") # A Gemini key is usually 39 characters
+        logger.info(f"DEBUG: GOOGLE_API_KEY is loaded. First 5 chars: {loaded_key[:5]}*****")
+        logger.info(f"DEBUG: Key length: {len(loaded_key)}") # A Gemini key is usually 39 characters
         
 
     if not os.environ.get("GOOGLE_API_KEY"):
+        logger.error("Google API Key not found. Please ensure it is set as a Kaggle Secret")
         raise ValueError("Google API Key not found. Please ensure it is set as a Kaggle Secret (or Colab Secret) named 'GOOGLE_API_KEY'.")
-
+        
     
     embedding_model = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
     if not os.path.exists(faiss_db_path):
-        print(f"FAISS index not found at {faiss_db_path}. Creating it now...")
+        logger.info(f"FAISS index not found at {faiss_db_path}. Creating it now...")
         loaded_docs = load_document(document)
         text_chunks = split_documents(loaded_docs)
         vector_store = create_vector_store(text_chunks, embedding_model, db_path=faiss_db_path)
@@ -48,13 +60,13 @@ def setup_rag_components(document:str, faiss_db_path:str,llm_model_id:str):
     
     retriever = vector_store.as_retriever(search_kwargs={"k": 2})
     
-    print(f"Initializing LLM: {llm_model_id} (Gemini)...")
+    logger.info(f"Initializing LLM: {llm_model_id} (Gemini)...")
     
     llm = ChatGoogleGenerativeAI(
             model=llm_model_id,
             temperature=0.7, 
         )
-    print(f"Successfully initialized Gemini model: {llm_model_id}")
+    logger.info(f"Successfully initialized Gemini model: {llm_model_id}")
     # --- Prompt Template ---
     # This template works well for both Flan-T5 and Gemini
     template = """Context: {context}
@@ -79,12 +91,15 @@ def setup_rag_components(document:str, faiss_db_path:str,llm_model_id:str):
     return qa_chain
 
 if __name__ == "__main__":
+   
+
+    
     GEMINI_LLM_MODEL = "models/gemini-2.0-flash"
 
     qa_chain = setup_rag_components(document="/kaggle/input/ai-wiki/Artificial intelligence - Wikipedia.pdf",
                                    faiss_db_path="/kaggle/working/faiss_index_2",
                                    llm_model_id=GEMINI_LLM_MODEL)
-    print("RAG setup complete. You can now ask questions.")
+    logger.info("RAG setup complete. You can now ask questions.")
 
     while True:
         query = input("\nEnter your question (type 'exit' to quit): ")
@@ -104,11 +119,11 @@ if __name__ == "__main__":
                 page_info = doc.metadata.get('page', 'N/A')
                 # st.markdown(f"**Document {i+1} (Page: {page_info}):**")
                 print(f"Doc {i+1} (Page: {page_info}): {doc.page_content[:400]}...") # Print first 400 chars
-            print("-" * 30)
+                print("-" * 30)
 
         except Exception as e:
-            print(f"An error occurred: {e}")
-            print("Please ensure your Google API Key is correctly set as an environment variable.")
+            logger.error(f"An error occurred: {e}")
+            logger.info("Please ensure your Google API Key is correctly set as an environment variable.")
             import traceback
-            traceback.print_exc() # <--- ADD THIS LINE
+            traceback.print_exc()
     
