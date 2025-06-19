@@ -10,6 +10,16 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings # For Gemini Emb
 # from create_load_vector_store import *
 # from data_loader import *
 
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
+
+# NEW IMPORTS FOR RE-RANKING
+from langchain.retrievers.document_compressors import CrossEncoderReranker # The re-ranker itself
+from langchain.retrievers import ContextualCompressionRetriever # To apply the re-ranker after retrieval
+# from sentence_transformers import CrossEncoder # To load the actual cross-encoder model
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+
+
  # --- Configure Logging ---
 logging.basicConfig(
         level=logging.INFO, # Set the default logging level to INFO
@@ -54,11 +64,51 @@ def setup_rag_components(document:str, faiss_db_path:str,llm_model_id:str):
         logger.info(f"FAISS index not found at {faiss_db_path}. Creating it now...")
         loaded_docs = load_document(document)
         text_chunks = split_documents(loaded_docs)
-        vector_store = create_vector_store(text_chunks, embedding_model, db_path=faiss_db_path)
+        faiss_vector_store = create_vector_store(text_chunks, embedding_model, db_path=faiss_db_path)
     else:
-        vector_store = load_vector_store(embedding_model, db_path=faiss_db_path)
+        faiss_vector_store = load_vector_store(embedding_model, db_path=faiss_db_path)
+
+        loaded_docs = load_document(document)
+        text_chunks = split_documents(loaded_docs)
     
-    retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+    fiass_retriever = faiss_vector_store.as_retriever(search_kwargs={"k": 10})
+    logger.info("FAISS retriever initialized (semantic search).")
+    
+    # 3. Setup BM25 Retriever (Keyword Search Retriever)
+    # BM25Retriever is created directly from the raw text chunk
+
+    bm25_retriever = BM25Retriever.from_documents(text_chunks)
+    bm25_retriever.k = 10
+    logger.info("BM25 retriever initialized (keyword search).")
+
+        
+    ensemble_retriever = EnsembleRetriever(
+        retrievers=[fiass_retriever,bm25_retriever],
+        weighs=[0.5,0.5]
+    )
+    logger.info(f"Ensemble Retriever (Hybrid Search) initialized with weights {ensemble_retriever.weights}.")
+    logger.info(f"Ensemble Retriever will pass initial {bm25_retriever.k} documents to the re-ranker.")
+
+    # 4. Setup Re-ranker
+    # re-ranker cross-encoder/ms-marco-MiniLM-L-6-v2' is a good general choice
+    # other options: 'cross-encoder/ms-marco-MMR' (for diversity), 'cross-encoder/ms-marco-TinyBERT-L-2' (smaller)
+
+    reranker_model_name = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    logger.info(f"Loading re-ranker model: {reranker_model_name}...")
+    try:
+        cross_encoder_model = HuggingFaceCrossEncoder(model_name=reranker_model_name)
+        reranker = CrossEncoderReranker(model=cross_encoder_model, top_n=5)
+    except Exception as e:
+        logger.error(f"Error loading re-ranker model '{reranker_model_name}': {e}")
+        logger.error("Please ensure 'sentence-transformers' is installed and the model name is correct.")
+        raise
+
+    # 5. Apply Contextual Compression with the Re-ranker
+    compression_retriever = ContextualCompressionRetriever(
+        base_compressor=reranker,
+        base_retriever=ensemble_retriever
+    )
+    logger.info("ContextualCompressionRetriever (with re-ranker) initialized.")
     
     logger.info(f"Initializing LLM: {llm_model_id} (Gemini)...")
     
@@ -83,7 +133,7 @@ def setup_rag_components(document:str, faiss_db_path:str,llm_model_id:str):
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff", # 'stuff' concatenates all retrieved docs into a single prompt
-        retriever=retriever,
+        retriever=compression_retriever,
         return_source_documents=True,
         chain_type_kwargs={"prompt": prompt_template_obj}
     )
@@ -97,7 +147,7 @@ if __name__ == "__main__":
     GEMINI_LLM_MODEL = "models/gemini-2.0-flash"
 
     qa_chain = setup_rag_components(document="/kaggle/input/ai-wiki/Artificial intelligence - Wikipedia.pdf",
-                                   faiss_db_path="/kaggle/working/faiss_index_2",
+                                   faiss_db_path="/kaggle/working/faiss_index_3",
                                    llm_model_id=GEMINI_LLM_MODEL)
     logger.info("RAG setup complete. You can now ask questions.")
 
